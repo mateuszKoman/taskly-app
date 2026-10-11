@@ -15,6 +15,8 @@ export function useCreateTodoMutation() {
         saved,
         ...current.filter((todo) => todo.id !== saved.id),
       ])
+      // The due-soon list is filtered by the server, so refetch it rather than patch it.
+      await queryClient.invalidateQueries({ queryKey: todoKeys.dueSoon })
     },
   })
 }

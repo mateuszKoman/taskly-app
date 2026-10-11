@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import type { Filter, Sort, Todo } from '../types'
-import { selectTodos } from '../utils/todos'
+import type { Filter, Sort } from '../types'
 
-export function useTodoFilters(todos: Todo[]) {
+/** Filter, search and sort state; the page applies it with `selectTodos`. */
+export function useTodoFilters() {
   const [filter, setFilter] = useState<Filter>('all')
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<Sort>('newest')
@@ -13,6 +13,5 @@ export function useTodoFilters(todos: Todo[]) {
     setSearch,
     sort,
     setSort,
-    visible: selectTodos(todos, filter, search, sort),
   }
 }

@@ -12,11 +12,19 @@ import { useTodosBusy } from './hooks/useTodosBusy'
 import { useTodosQuery } from './hooks/useTodosQuery'
 import { useUpdateTodoMutation } from './hooks/useUpdateTodoMutation'
 import type { Todo } from './types'
+import { selectTodos } from './utils/todos'
 
 export function TodosPage() {
-  const todosQuery = useTodosQuery()
+  const filters = useTodoFilters()
+  // "Due soon" is decided by the server, so that filter is a separate query.
+  const todosQuery = useTodosQuery(filters.filter === 'due-soon')
   const todos = todosQuery.data ?? []
-  const filters = useTodoFilters(todos)
+  const visible = selectTodos(
+    todos,
+    filters.filter,
+    filters.search,
+    filters.sort,
+  )
   const toggleTodo = useUpdateTodoMutation()
   const busy = useTodosBusy()
   const { message, notify } = useNotice()
@@ -73,7 +81,7 @@ export function TodosPage() {
           </Alert>
         )}
         <TodoList
-          todos={filters.visible}
+          todos={visible}
           hasTodos={todos.length > 0}
           loading={todosQuery.isPending}
           failed={todosQuery.isError}
