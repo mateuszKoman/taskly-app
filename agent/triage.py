@@ -17,6 +17,8 @@ class Target:
     status: str
     test_file: str
     test_exists: bool
+    coverage: float | None = None  # full mode only
+    missing_lines: list[int] = field(default_factory=list)  # full mode only
 
 
 @dataclass
@@ -29,6 +31,7 @@ class Ignored:
 class Triage:
     base: str
     merge_base: str
+    mode: str = "pr"
     targets: list[Target] = field(default_factory=list)
     ignored: list[Ignored] = field(default_factory=list)
 

@@ -40,3 +40,65 @@ it('shows a deletion error and allows cancelling without deleting', async () => 
   expect(mutateAsync).not.toHaveBeenCalled()
   expect(onDeleted).not.toHaveBeenCalled()
 })
+
+it('deletes the task and notifies on confirmation', async () => {
+  const user = userEvent.setup()
+  const mutateAsync = vi.fn().mockResolvedValue(undefined)
+  vi.mocked(useDeleteTodoMutation).mockReturnValue({
+    isPending: false,
+    error: null,
+    mutateAsync,
+  } as unknown as ReturnType<typeof useDeleteTodoMutation>)
+  const onDeleted = vi.fn()
+  render(
+    <DeleteTodoDialog
+      todo={todoFixture}
+      busy={false}
+      onClose={vi.fn()}
+      onDeleted={onDeleted}
+    />,
+  )
+  await user.click(screen.getByRole('button', { name: 'Delete task' }))
+  expect(mutateAsync).toHaveBeenCalledWith(todoFixture.id)
+  expect(onDeleted).toHaveBeenCalledTimes(1)
+})
+
+it('does not notify when the deletion fails', async () => {
+  const user = userEvent.setup()
+  const mutateAsync = vi.fn().mockRejectedValue(new Error('nope'))
+  vi.mocked(useDeleteTodoMutation).mockReturnValue({
+    isPending: false,
+    error: null,
+    mutateAsync,
+  } as unknown as ReturnType<typeof useDeleteTodoMutation>)
+  const onDeleted = vi.fn()
+  render(
+    <DeleteTodoDialog
+      todo={todoFixture}
+      busy={false}
+      onClose={vi.fn()}
+      onDeleted={onDeleted}
+    />,
+  )
+  await user.click(screen.getByRole('button', { name: 'Delete task' }))
+  expect(mutateAsync).toHaveBeenCalledTimes(1)
+  expect(onDeleted).not.toHaveBeenCalled()
+})
+
+it('disables actions while a deletion is pending', () => {
+  vi.mocked(useDeleteTodoMutation).mockReturnValue({
+    isPending: true,
+    error: null,
+    mutateAsync: vi.fn(),
+  } as unknown as ReturnType<typeof useDeleteTodoMutation>)
+  render(
+    <DeleteTodoDialog
+      todo={todoFixture}
+      busy={false}
+      onClose={vi.fn()}
+      onDeleted={vi.fn()}
+    />,
+  )
+  expect(screen.getByRole('button', { name: 'Deleting…' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+})

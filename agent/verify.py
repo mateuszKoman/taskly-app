@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent.tools import RunRecord, backend_python, clip, safe_env
@@ -16,12 +16,20 @@ COVERAGE_METRIC = {"backend": "statements+branches", "frontend": "lines"}
 
 
 @dataclass
+class FileCoverage:
+    path: str  # repo-relative
+    coverage: float
+    missing_lines: list[int]
+
+
+@dataclass
 class SuiteResult:
     passed: bool
     exit_code: int
     coverage: float | None
     metric: str
     output: str
+    files: list[FileCoverage] = field(default_factory=list)  # per-file detail; kept out of the report
 
 
 def suite_command(root: Path, side: str, out: Path) -> tuple[list[str], dict[str, str]]:
@@ -34,7 +42,7 @@ def suite_command(root: Path, side: str, out: Path) -> tuple[list[str], dict[str
     else:
         command = [
             str(root / "frontend" / "node_modules" / ".bin" / "vitest"), "run", "--coverage",
-            "--coverage.reporter=json-summary", f"--coverage.reportsDirectory={out}",
+            "--coverage.reporter=json-summary", "--coverage.reporter=json", f"--coverage.reportsDirectory={out}",
         ]
         env.update(CI="1", FORCE_COLOR="0")
     return command, env
@@ -47,6 +55,34 @@ def read_coverage(side: str, out: Path) -> float | None:
         return round(json.loads((out / "coverage-summary.json").read_text())["total"]["lines"]["pct"], 2)
     except (OSError, KeyError, ValueError):
         return None
+
+
+def repo_relative(root: Path, path: str) -> str | None:
+    try:
+        return Path(path).resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return None
+
+
+def read_file_coverage(root: Path, side: str, out: Path) -> list[FileCoverage]:
+    """Per-file coverage with uncovered line numbers, from pytest-cov's JSON or istanbul's coverage-final.json."""
+    files = []
+    try:
+        if side == "backend":
+            for path, data in json.loads((out / "coverage.json").read_text())["files"].items():
+                files.append(FileCoverage(f"backend/{path}", round(data["summary"]["percent_covered"], 2),
+                                          sorted(data["missing_lines"])))
+        else:
+            summary = json.loads((out / "coverage-summary.json").read_text())
+            for path, data in json.loads((out / "coverage-final.json").read_text()).items():
+                rel = repo_relative(root, path)
+                if rel is None or path not in summary:
+                    continue
+                missing = {data["statementMap"][i]["start"]["line"] for i, count in data["s"].items() if count == 0}
+                files.append(FileCoverage(rel, round(summary[path]["lines"]["pct"], 2), sorted(missing)))
+    except (OSError, KeyError, ValueError):
+        return []
+    return files
 
 
 def run_suite(root: Path, side: str) -> SuiteResult:
@@ -63,7 +99,10 @@ def run_suite(root: Path, side: str) -> SuiteResult:
         except OSError as exc:
             return SuiteResult(False, -1, None, metric, f"suite could not start: {exc}")
         output = clip(proc.stdout + proc.stderr, MAX_SUITE_OUTPUT_CHARS)
-        return SuiteResult(proc.returncode == 0, proc.returncode, read_coverage(side, out), metric, output)
+        return SuiteResult(
+            proc.returncode == 0, proc.returncode, read_coverage(side, out), metric, output,
+            read_file_coverage(root, side, out),
+        )
 
 
 def drop_reason(record: RunRecord, path: str) -> str:

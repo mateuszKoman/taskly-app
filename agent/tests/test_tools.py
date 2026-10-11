@@ -155,3 +155,35 @@ def test_flag_suspected_bug_needs_a_test_path_and_reason(toolbox):
     assert toolbox.record.suspected_bugs == [
         {"test_file": "backend/tests/test_a.py", "test_name": "test_x", "reason": "returns None for empty input"},
     ]
+
+
+def test_frontend_type_errors_turn_a_passing_run_red(toolbox, repo, monkeypatch):
+    import subprocess
+    from types import SimpleNamespace
+    write(repo, "frontend/node_modules/.bin/vitest", "")
+    write(repo, "frontend/node_modules/.bin/tsc", "")
+    tsc_output = (
+        "src/App.test.tsx(3,7): error TS2345: Argument of type 'string' is not assignable to 'number'.\n"
+        "src/other.test.ts(1,1): error TS1005: unrelated file\n"
+    )
+    outputs = iter([SimpleNamespace(returncode=0, stdout="1 passed", stderr=""),
+                    SimpleNamespace(returncode=2, stdout=tsc_output, stderr="")])
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: next(outputs))
+    output = toolbox.call("run_tests", {"target": "frontend", "paths": ["frontend/src/App.test.tsx"]})
+    assert "FAILED" in output and "TS2345" in output and "unrelated file" not in output
+    assert toolbox.record.last_result == {"frontend/src/App.test.tsx": False}
+
+
+def test_frontend_writes_are_formatted_with_prettier(toolbox, repo, monkeypatch):
+    import subprocess
+    write(repo, "frontend/node_modules/.bin/prettier", "")
+    from types import SimpleNamespace
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda command, **kw: calls.append((command, kw["cwd"])) or
+                        SimpleNamespace(returncode=0, stdout="", stderr=""))
+    toolbox.call("write_test_file", {"path": "frontend/src/App.test.tsx", "content": "it('x',()=>{})"})
+    toolbox.call("write_test_file", {"path": "backend/tests/test_b.py", "content": "x = 1\n"})
+    assert len(calls) == 1
+    command, cwd = calls[0]
+    assert command[1:] == ["--write", "--log-level", "silent", "src/App.test.tsx"]
+    assert cwd == repo.resolve() / "frontend"

@@ -19,6 +19,15 @@ For each target, in order:
 
 A good reason is specific: "new `due_soon` filter branch in `list_todos` has no test", not "file changed".
 
+## Full mode
+
+When the triage says full-repo mode, there is no diff: each target is an existing file with a coverage gap, listed with its `coverage` and `missing_lines`. Read the source and its tests, then decide:
+
+- **create** or **update** to cover the uncovered lines that carry behaviour (branches, error paths, handlers).
+- **skip** only when the uncovered lines are untestable wiring, with a reason that says so.
+
+The reason names the behaviour the new tests cover, such as "error mapping for 422 and network failures in `request` has no test".
+
 ## Scope
 
 An update adds test functions for the changed behaviour and repairs tests the change broke. Existing green tests stay as they are.

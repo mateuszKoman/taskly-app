@@ -73,6 +73,18 @@ def backend_python(root: Path) -> str:
     return str(venv) if venv.exists() else sys.executable
 
 
+def frontend_bin(root: Path, name: str) -> Path:
+    return root / "frontend" / "node_modules" / ".bin" / name
+
+
+def run_quiet(command: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, str]:
+    try:
+        proc = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, timeout=TEST_TIMEOUT_SECONDS)
+        return proc.returncode, proc.stdout + proc.stderr
+    except subprocess.TimeoutExpired:
+        return -1, f"timed out after {TEST_TIMEOUT_SECONDS}s"
+
+
 def obj(properties: dict, required: list[str]) -> dict:
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
@@ -230,7 +242,25 @@ class Toolbox:
         resolved.parent.mkdir(parents=True, exist_ok=True)
         resolved.write_text(content)
         self.record.last_result.pop(rel, None)
+        self.format_frontend(rel)
         return f"wrote {rel} ({len(content)} characters)"
+
+    def format_frontend(self, rel: str) -> None:
+        """Apply the repo's Prettier style so generated tests match hand-written ones; a parse error is left for the run."""
+        prettier = frontend_bin(self.root, "prettier")
+        if rel.startswith("frontend/") and prettier.exists():
+            run_quiet([str(prettier), "--write", "--log-level", "silent", rel.removeprefix("frontend/")],
+                      self.root / "frontend", safe_env())
+
+    def typecheck_frontend(self, rel: str) -> tuple[int, str]:
+        """Vitest strips types without checking them; tsc catches what `npm run build` would reject."""
+        tsc = frontend_bin(self.root, "tsc")
+        if not tsc.exists():
+            return 0, ""
+        code, output = run_quiet([str(tsc), "--noEmit", "--pretty", "false", "-p", "."], self.root / "frontend", safe_env())
+        side_path = rel.removeprefix("frontend/")
+        errors = [line for line in output.splitlines() if line.startswith(f"{side_path}(")]
+        return (1, "Type errors (tsc --noEmit):\n" + "\n".join(errors)) if errors else (0, "")
 
     def test_command(self, target: str, rel: str) -> tuple[list[str], Path, dict[str, str]]:
         side_dir = self.root / target
@@ -263,13 +293,9 @@ class Toolbox:
 
     def run_one(self, target: str, rel: str) -> str:
         command, cwd, env = self.test_command(target, rel)
-        try:
-            proc = subprocess.run(
-                command, cwd=cwd, env=env, capture_output=True, text=True, timeout=TEST_TIMEOUT_SECONDS,
-            )
-            exit_code, output = proc.returncode, proc.stdout + proc.stderr
-        except subprocess.TimeoutExpired:
-            exit_code, output = -1, f"timed out after {TEST_TIMEOUT_SECONDS}s"
+        exit_code, output = run_quiet(command, cwd, env)
+        if exit_code == 0 and target == "frontend":
+            exit_code, output = self.typecheck_frontend(rel)
         passed = exit_code == 0
         self.record.test_runs.append(TestRun(target, rel, exit_code, passed))
         self.record.last_result[rel] = passed

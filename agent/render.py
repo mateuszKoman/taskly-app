@@ -62,6 +62,8 @@ def headline(report: dict) -> str:
     status = report["status"]
     decisions = report["decisions"]
     written = report["files_written"]
+    if status == "nothing_to_do" and report.get("mode") == "full":
+        return "Every file already meets the coverage threshold, so no tests were needed and no model was called."
     if status == "nothing_to_do":
         return "No testable source changes in this PR, so no tests were needed and no model was called."
     if status == "ok":
