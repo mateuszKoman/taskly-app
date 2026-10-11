@@ -12,3 +12,9 @@ htmlcov/
 *.db-wal
 .env
 .DS_Store
+
+# Local planning and output, never committed
+REQUIREMENTS.md
+.idea/
+agent-output/
+docs/
