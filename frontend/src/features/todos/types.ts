@@ -8,8 +8,10 @@ export interface TodoInput {
 }
 export interface Todo extends TodoInput {
   id: number
+  /** Computed by the API: not completed and due within the next 48 hours. */
+  due_soon: boolean
   created_at: string
   updated_at: string
 }
-export type Filter = 'all' | 'active' | 'completed'
+export type Filter = 'all' | 'active' | 'completed' | 'due-soon'
 export type Sort = 'newest' | 'priority' | 'due'

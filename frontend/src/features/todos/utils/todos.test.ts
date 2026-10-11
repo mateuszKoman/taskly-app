@@ -9,6 +9,7 @@ const base: Todo = {
   priority: 'medium',
   completed: false,
   due_date: null,
+  due_soon: false,
   created_at: '2026-10-01T12:00:00Z',
   updated_at: '2026-10-01T12:00:00Z',
 }

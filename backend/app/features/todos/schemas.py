@@ -1,7 +1,9 @@
 from datetime import date, datetime
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+
+from .due import is_due_soon, utc_now
 
 from .validators import validate_patch_fields
 
@@ -40,3 +42,8 @@ class Todo(TodoCreate):
     id: int
     created_at: datetime
     updated_at: datetime
+
+    @computed_field
+    @property
+    def due_soon(self) -> bool:
+        return is_due_soon(self.due_date, self.completed, utc_now())

@@ -44,6 +44,7 @@ export function TodoItem({
               <Text as="span" muted size="small">
                 {priorityLabels[todo.priority]}
               </Text>
+              {todo.due_soon && <Badge variant="warning">Due soon</Badge>}
               {todo.due_date && (
                 <Badge variant={isOverdue(todo) ? 'warning' : 'neutral'}>
                   <span className="row compact">
