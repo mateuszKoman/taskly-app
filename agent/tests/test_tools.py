@@ -83,3 +83,30 @@ def test_safe_env_strips_secrets(monkeypatch):
     env = safe_env()
     assert "ANTHROPIC_API_KEY" not in env and "GITHUB_TOKEN" not in env and "DB_PASSWORD" not in env
     assert env["HARMLESS"] == "ok"
+
+
+def test_frontend_tests_run_vitest_with_a_scrubbed_environment(toolbox, repo, monkeypatch):
+    import subprocess
+    from types import SimpleNamespace
+    write(repo, "frontend/node_modules/.bin/vitest", "")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk")
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda command, **kw: calls.append((command, kw)) or
+                        SimpleNamespace(returncode=1, stdout="1 failed", stderr=""))
+    output = toolbox.call("run_tests", {"target": "frontend", "paths": ["frontend/src/App.test.tsx"]})
+    command, kw = calls[0]
+    assert command[1:] == ["run", "src/App.test.tsx"]
+    assert kw["cwd"] == repo.resolve() / "frontend"
+    assert "ANTHROPIC_API_KEY" not in kw["env"] and kw["env"]["CI"] == "1"
+    assert output.startswith("FAILED")
+    assert toolbox.record.last_result == {"frontend/src/App.test.tsx": False}
+
+
+def test_frontend_run_needs_installed_dependencies(toolbox):
+    with pytest.raises(ToolError, match="npm ci"):
+        toolbox.call("run_tests", {"target": "frontend", "paths": ["frontend/src/App.test.tsx"]})
+
+
+def test_target_and_path_side_must_agree(toolbox):
+    with pytest.raises(ToolError, match="not a frontend test file"):
+        toolbox.call("run_tests", {"target": "frontend", "paths": ["backend/tests/features/todos/test_router.py"]})

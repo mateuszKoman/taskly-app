@@ -14,6 +14,21 @@ def write(root: Path, rel: str, text: str = "x = 1\n") -> None:
     path.write_text(text)
 
 
+VITE_CONFIG = """export default defineConfig({
+  test: {
+    coverage: {
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/main.tsx',
+        'src/**/*.test.{ts,tsx}',
+        'src/**/types.ts',
+      ],
+    },
+  },
+})
+"""
+
+
 @pytest.fixture
 def repo(tmp_path):
     """A tiny git repo shaped like Taskly, with one commit on `main`."""
@@ -23,6 +38,10 @@ def repo(tmp_path):
     write(tmp_path, "backend/pyproject.toml", '[tool.coverage.run]\nomit = ["*/app/**/schemas.py", "*/app/**/__init__.py"]\n')
     write(tmp_path, "backend/app/features/todos/router.py")
     write(tmp_path, "backend/tests/features/todos/test_router.py", "def test_ok():\n    assert True\n")
+    write(tmp_path, "frontend/vite.config.ts", VITE_CONFIG)
+    write(tmp_path, "frontend/src/lib/http.ts", "export const a = 1\n")
+    write(tmp_path, "frontend/src/App.tsx", "export const App = () => null\n")
+    write(tmp_path, "frontend/src/App.test.tsx", "it('renders', () => {})\n")
     write(tmp_path, "README.md", "hello\n")
     run_git(tmp_path, "add", ".")
     run_git(tmp_path, "commit", "-q", "-m", "base")
