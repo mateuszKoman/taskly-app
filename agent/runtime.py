@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -20,7 +21,9 @@ MAX_COMPLETION_NUDGES = 2
 class Config:
     model: str = "claude-sonnet-5-5"
     max_turns: int = 40
-    max_tokens: int = 16_000
+    max_tokens: int = 16_000  # per response
+    max_total_tokens: int = 3_000_000  # input (cached or not) plus output, across the run
+    deadline_seconds: int = 12 * 60  # leaves room for the final suites inside a 15-minute job
     effort: str = "medium"
 
 
@@ -31,10 +34,14 @@ class Usage:
     output_tokens: int = 0
     cache_read_input_tokens: int = 0
 
+    @property
+    def total(self) -> int:
+        return self.input_tokens + self.cache_read_input_tokens + self.output_tokens
+
 
 @dataclass
 class RunResult:
-    stop_reason: str  # "completed" | "incomplete" | "max_turns" | "refusal" | "max_tokens"
+    stop_reason: str  # "completed" | "incomplete" | "refusal" | "max_tokens" | "limit:<turns|tokens|time>"
     summary: str
     usage: Usage = field(default_factory=Usage)
 
@@ -47,8 +54,8 @@ def missing_work(triage: Triage, record: RunRecord) -> list[str]:
     """What still stands between this run and its completion criterion."""
     gaps = [f"no decision recorded for {t.path}" for t in triage.targets if t.path not in record.decisions]
     for path in record.files_written:
-        if record.last_result.get(path) is not True:
-            gaps.append(f"{path} has not passed in its latest run")
+        if record.last_result.get(path) is not True and not record.budget_spent(path):
+            gaps.append(f"{path} is not green in its latest run")
     return gaps
 
 
@@ -90,11 +97,21 @@ class Agent:
         log.info("tool %s %s", block.name, "error" if is_error else "ok")
         return {"type": "tool_result", "tool_use_id": block.id, "content": content, "is_error": is_error}
 
+    def limit_hit(self, usage: Usage, started: float) -> str | None:
+        if usage.turns >= self.config.max_turns:
+            return "turns"
+        if usage.total >= self.config.max_total_tokens:
+            return "tokens"
+        if time.monotonic() - started >= self.config.deadline_seconds:
+            return "time"
+        return None
+
     def run(self, triage: Triage) -> RunResult:
         usage = Usage()
+        started = time.monotonic()
         messages: list[dict] = [{"role": "user", "content": first_message(triage)}]
         nudges = 0
-        while usage.turns < self.config.max_turns:
+        while (limit := self.limit_hit(usage, started)) is None:
             response = self.request(messages)
             usage.turns += 1
             usage.input_tokens += response.usage.input_tokens
@@ -120,4 +137,5 @@ class Agent:
                 "role": "user",
                 "content": "The run is not done yet:\n" + "\n".join(f"- {g}" for g in gaps),
             })
-        return RunResult("max_turns", "", usage)
+        log.warning("limit hit: %s", limit)
+        return RunResult(f"limit:{limit}", "", usage)

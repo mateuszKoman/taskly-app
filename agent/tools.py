@@ -18,6 +18,8 @@ MAX_READ_CHARS = 60_000
 MAX_LIST_ENTRIES = 500
 MAX_TEST_OUTPUT_CHARS = 12_000
 TEST_TIMEOUT_SECONDS = 300
+MAX_REPAIRS = 3  # failed runs a test file may be repaired after; one more failure spends its budget
+MAX_FAILURE_EXCERPT_CHARS = 2_000
 SECRET_ENV = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)|^(ANTHROPIC_|GITHUB_|ACTIONS_)", re.I)
 
 
@@ -28,7 +30,7 @@ class ToolError(Exception):
 @dataclass
 class TestRun:
     target: str
-    paths: list[str]
+    path: str
     exit_code: int
     passed: bool
 
@@ -39,9 +41,17 @@ class RunRecord:
 
     decisions: dict[str, dict] = field(default_factory=dict)
     files_written: dict[str, str] = field(default_factory=dict)  # path -> "create" | "update"
+    originals: dict[str, str | None] = field(default_factory=dict)  # content before the first write
     last_result: dict[str, bool] = field(default_factory=dict)  # test path -> passed in latest run
+    last_output: dict[str, str] = field(default_factory=dict)  # test path -> excerpt of latest failure
+    failures: dict[str, int] = field(default_factory=dict)  # test path -> failed runs
     test_runs: list[TestRun] = field(default_factory=list)
     skills_loaded: list[str] = field(default_factory=list)
+    suspected_bugs: list[dict] = field(default_factory=list)
+    dropped: list[dict] = field(default_factory=list)
+
+    def budget_spent(self, path: str) -> bool:
+        return self.failures.get(path, 0) > MAX_REPAIRS
 
 
 def clip(text: str, limit: int) -> str:
@@ -96,8 +106,8 @@ TOOL_SPECS: list[dict[str, Any]] = [
     {
         "name": "run_tests",
         "description": (
-            "Run the given test files with the side's fixed command (backend: pytest, frontend: vitest run) "
-            "and return the result."
+            "Run the given test files, each on its own, with the side's fixed command "
+            "(backend: pytest, frontend: vitest run) and return each result."
         ),
         "input_schema": obj(
             {
@@ -111,6 +121,21 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "name": "load_skill",
         "description": "Load the full instructions of a skill listed in the system prompt.",
         "input_schema": obj({"name": STR}, ["name"]),
+    },
+    {
+        "name": "flag_suspected_bug",
+        "description": (
+            "Report a test case you removed because the source behaviour itself looks wrong. "
+            "Say what you expected and what the code does."
+        ),
+        "input_schema": obj(
+            {
+                "test_file": {**STR, "description": "The test file the case was removed from."},
+                "test_name": {**STR, "description": "Name of the removed test case."},
+                "reason": {**STR, "description": "Expected versus actual behaviour, one or two sentences."},
+            },
+            ["test_file", "test_name", "reason"],
+        ),
     },
     {
         "name": "record_decision",
@@ -145,6 +170,7 @@ class Toolbox:
             "run_tests": self.run_tests,
             "load_skill": self.load_skill,
             "record_decision": self.record_decision,
+            "flag_suspected_bug": self.flag_suspected_bug,
         }
 
     @property
@@ -192,16 +218,23 @@ class Toolbox:
 
     def write_test_file(self, path: str, content: str) -> str:
         rel, resolved = self.policy.writable_test(path)
+        if self.record.budget_spent(rel):
+            raise ToolError(
+                f"{rel} has failed {self.record.failures[rel]} runs and its repair budget is spent; "
+                "it will be dropped from the output. Flag any suspected bug and move on."
+            )
         if rel not in self.record.files_written:
-            self.record.files_written[rel] = "update" if resolved.exists() else "create"
+            existed = resolved.exists()
+            self.record.files_written[rel] = "update" if existed else "create"
+            self.record.originals[rel] = resolved.read_text() if existed else None
         resolved.parent.mkdir(parents=True, exist_ok=True)
         resolved.write_text(content)
         self.record.last_result.pop(rel, None)
         return f"wrote {rel} ({len(content)} characters)"
 
-    def test_command(self, target: str, rels: list[str]) -> tuple[list[str], Path, dict[str, str]]:
+    def test_command(self, target: str, rel: str) -> tuple[list[str], Path, dict[str, str]]:
         side_dir = self.root / target
-        side_paths = [str(PurePosixPath(r).relative_to(target)) for r in rels]
+        side_path = str(PurePosixPath(rel).relative_to(target))
         env = safe_env()
         if target == "backend":
             command = [backend_python(self.root), "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider"]
@@ -211,7 +244,7 @@ class Toolbox:
                 raise ToolError("frontend dependencies are not installed (run `npm ci` in frontend/)")
             command = [str(vitest), "run"]
             env.update(CI="1", FORCE_COLOR="0")
-        return command + side_paths, side_dir, env
+        return [*command, side_path], side_dir, env
 
     def run_tests(self, target: str, paths: list[str]) -> str:
         if target not in TEST_PATTERNS:
@@ -226,21 +259,27 @@ class Toolbox:
             if not resolved.is_file():
                 raise ToolError(f"{rel} does not exist")
             rels.append(rel)
-        command, cwd, env = self.test_command(target, rels)
+        return "\n\n".join(self.run_one(target, rel) for rel in rels)
+
+    def run_one(self, target: str, rel: str) -> str:
+        command, cwd, env = self.test_command(target, rel)
         try:
             proc = subprocess.run(
                 command, cwd=cwd, env=env, capture_output=True, text=True, timeout=TEST_TIMEOUT_SECONDS,
             )
+            exit_code, output = proc.returncode, proc.stdout + proc.stderr
         except subprocess.TimeoutExpired:
-            for rel in rels:
-                self.record.last_result[rel] = False
-            raise ToolError(f"tests timed out after {TEST_TIMEOUT_SECONDS}s") from None
-        passed = proc.returncode == 0
-        self.record.test_runs.append(TestRun(target, rels, proc.returncode, passed))
-        for rel in rels:
-            self.record.last_result[rel] = passed
-        verdict = "PASSED" if passed else f"FAILED (exit code {proc.returncode})"
-        return f"{verdict}\n{clip(proc.stdout + proc.stderr, MAX_TEST_OUTPUT_CHARS)}"
+            exit_code, output = -1, f"timed out after {TEST_TIMEOUT_SECONDS}s"
+        passed = exit_code == 0
+        self.record.test_runs.append(TestRun(target, rel, exit_code, passed))
+        self.record.last_result[rel] = passed
+        if passed:
+            return f"== {rel}: PASSED"
+        self.record.failures[rel] = self.record.failures.get(rel, 0) + 1
+        self.record.last_output[rel] = clip(output, MAX_FAILURE_EXCERPT_CHARS)
+        left = MAX_REPAIRS - self.record.failures[rel] + 1
+        budget = f"{left} repair(s) left" if left > 0 else "repair budget spent; this file will be dropped"
+        return f"== {rel}: FAILED (exit code {exit_code}, {budget})\n{clip(output, MAX_TEST_OUTPUT_CHARS)}"
 
     def load_skill(self, name: str) -> str:
         skill = self.skills.get(name)
@@ -249,6 +288,13 @@ class Toolbox:
         if name not in self.record.skills_loaded:
             self.record.skills_loaded.append(name)
         return skill.body
+
+    def flag_suspected_bug(self, test_file: str, test_name: str, reason: str) -> str:
+        rel = self.policy.writable_test(test_file)[0]
+        if not test_name.strip() or not reason.strip():
+            raise ToolError("test_name and reason must not be empty")
+        self.record.suspected_bugs.append({"test_file": rel, "test_name": test_name.strip(), "reason": reason.strip()})
+        return f"flagged suspected bug from {rel}::{test_name.strip()}"
 
     def record_decision(self, path: str, action: str, reason: str) -> str:
         target = self.triage.target(path)
