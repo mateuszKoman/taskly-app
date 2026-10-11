@@ -5,7 +5,7 @@ from agent.skills import SkillError, load_skills, skill_index
 
 def test_shipped_skills_load_with_descriptions():
     skills = load_skills()
-    assert {"triage-changes", "write-backend-tests", "write-frontend-tests"} <= set(skills)
+    assert {"triage-changes", "write-backend-tests", "write-frontend-tests", "verify-and-repair", "report-results"} <= set(skills)
     assert all(s.description and s.body for s in skills.values())
     assert "`triage-changes`" in skill_index(skills)
 
