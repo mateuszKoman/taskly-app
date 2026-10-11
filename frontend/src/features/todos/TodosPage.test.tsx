@@ -84,6 +84,20 @@ vi.mock('./components/DeleteTodoDialog', () => ({
 }))
 vi.mock('../../components/SuccessNotice', () => ({ SuccessNotice: () => null }))
 
+function filtersState(
+  overrides: Partial<ReturnType<typeof useTodoFilters>> = {},
+) {
+  return {
+    filter: 'all',
+    search: '',
+    sort: 'newest',
+    setFilter: vi.fn(),
+    setSearch: vi.fn(),
+    setSort: vi.fn(),
+    ...overrides,
+  } as ReturnType<typeof useTodoFilters>
+}
+
 function setup({
   busy = false,
   mutationError = null as Error | null,
@@ -107,15 +121,7 @@ function setup({
   } as unknown as ReturnType<typeof useUpdateTodoMutation>)
   vi.mocked(useTodosBusy).mockReturnValue(busy)
   vi.mocked(useNotice).mockReturnValue({ message: '', notify })
-  vi.mocked(useTodoFilters).mockReturnValue({
-    filter: 'all',
-    search: '',
-    sort: 'newest',
-    visible: [todoFixture],
-    setFilter: vi.fn(),
-    setSearch: vi.fn(),
-    setSort: vi.fn(),
-  })
+  vi.mocked(useTodoFilters).mockReturnValue(filtersState())
   return { notify, mutateAsync }
 }
 
@@ -138,15 +144,7 @@ it('displays a query failure and resets mutation errors before retrying', async 
   } as unknown as ReturnType<typeof useUpdateTodoMutation>)
   vi.mocked(useTodosBusy).mockReturnValue(false)
   vi.mocked(useNotice).mockReturnValue({ message: '', notify: vi.fn() })
-  vi.mocked(useTodoFilters).mockReturnValue({
-    filter: 'all',
-    search: '',
-    sort: 'newest',
-    visible: [],
-    setFilter: vi.fn(),
-    setSearch: vi.fn(),
-    setSort: vi.fn(),
-  })
+  vi.mocked(useTodoFilters).mockReturnValue(filtersState())
   render(<TodosPage />)
   expect(screen.getByTestId('alert')).toHaveTextContent(
     'The server is unavailable.',
@@ -157,6 +155,35 @@ it('displays a query failure and resets mutation errors before retrying', async 
   expect(reset.mock.invocationCallOrder[0]).toBeLessThan(
     refetch.mock.invocationCallOrder[0],
   )
+})
+
+it('queries all tasks unless the due-soon filter is selected', () => {
+  setup()
+  const { unmount } = render(<TodosPage />)
+  expect(useTodosQuery).toHaveBeenLastCalledWith(false)
+  unmount()
+  vi.mocked(useTodoFilters).mockReturnValue(
+    filtersState({ filter: 'due-soon' }),
+  )
+  render(<TodosPage />)
+  expect(useTodosQuery).toHaveBeenLastCalledWith(true)
+})
+
+it('lists only the tasks that match the active filter', () => {
+  setup()
+  vi.mocked(useTodosQuery).mockReturnValue({
+    data: [todoFixture],
+    isPending: false,
+    isFetching: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  } as unknown as ReturnType<typeof useTodosQuery>)
+  vi.mocked(useTodoFilters).mockReturnValue(
+    filtersState({ filter: 'completed' }),
+  )
+  render(<TodosPage />)
+  expect(screen.queryByRole('button', { name: 'toggle' })).toBeNull()
 })
 
 it('toggles a task and announces completion', async () => {

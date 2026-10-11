@@ -38,3 +38,16 @@ it('leaves the cache untouched when the list was never loaded', async () => {
   })
   expect(queryClient.getQueryData(todoKeys.list)).toBeUndefined()
 })
+
+it('invalidates the due-soon query after deleting a task', async () => {
+  const queryClient = new QueryClient()
+  const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+  vi.mocked(todosApi.remove).mockResolvedValue(undefined)
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client: queryClient }, children)
+  const { result } = renderHook(() => useDeleteTodoMutation(), { wrapper })
+  await act(async () => {
+    await result.current.mutateAsync(1)
+  })
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: todoKeys.dueSoon })
+})

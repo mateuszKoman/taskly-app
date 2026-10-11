@@ -44,3 +44,16 @@ it('does not create a cached list when none was loaded', async () => {
   })
   expect(queryClient.getQueryData(todoKeys.list)).toBeUndefined()
 })
+
+it('invalidates the due-soon query after updating a task', async () => {
+  const queryClient = new QueryClient()
+  const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+  vi.mocked(todosApi.update).mockResolvedValue(todoFixture)
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client: queryClient }, children)
+  const { result } = renderHook(() => useUpdateTodoMutation(), { wrapper })
+  await act(async () => {
+    await result.current.mutateAsync({ id: 7, input: {} })
+  })
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: todoKeys.dueSoon })
+})
