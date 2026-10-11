@@ -13,6 +13,8 @@ export function useDeleteTodoMutation() {
       queryClient.setQueryData<Todo[]>(todoKeys.list, (current) =>
         current?.filter((todo) => todo.id !== id),
       )
+      // The due-soon list is filtered by the server, so refetch it rather than patch it.
+      await queryClient.invalidateQueries({ queryKey: todoKeys.dueSoon })
     },
   })
 }

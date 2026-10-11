@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .due import due_soon_range, utc_now
 from .mappers import from_model
 from .models import TodoRecord
 from .schemas import Todo, TodoCreate, TodoUpdate
@@ -12,8 +13,13 @@ class TodoRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def list(self) -> list[Todo]:
+    def list(self, due_soon: bool = False) -> list[Todo]:
         statement = select(TodoRecord).order_by(TodoRecord.created_at.desc(), TodoRecord.id.desc())
+        if due_soon:
+            start, end = due_soon_range(utc_now())
+            statement = statement.where(
+                TodoRecord.completed.is_(False), TodoRecord.due_date >= start, TodoRecord.due_date <= end
+            )
         return [from_model(record) for record in self.session.scalars(statement)]
 
     def get(self, todo_id: int) -> Todo | None:

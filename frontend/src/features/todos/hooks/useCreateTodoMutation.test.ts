@@ -52,3 +52,22 @@ it('starts a cached list when none exists', async () => {
   })
   expect(queryClient.getQueryData(todoKeys.list)).toEqual([todoFixture])
 })
+
+it('invalidates the due-soon query after creating a task', async () => {
+  const queryClient = new QueryClient()
+  const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+  vi.mocked(todosApi.create).mockResolvedValue(todoFixture)
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client: queryClient }, children)
+  const { result } = renderHook(() => useCreateTodoMutation(), { wrapper })
+  await act(async () => {
+    await result.current.mutateAsync({
+      title: 'x',
+      description: '',
+      priority: 'low',
+      due_date: null,
+      completed: false,
+    })
+  })
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: todoKeys.dueSoon })
+})

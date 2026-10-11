@@ -32,9 +32,15 @@ export function selectTodos(
   const search = query.trim().toLocaleLowerCase('en')
   return todos
     .filter((todo) => {
-      const statusMatches =
-        filter === 'all' ||
-        (filter === 'completed' ? todo.completed : !todo.completed)
+      let statusMatches = true
+
+      if (filter === 'due-soon') {
+        statusMatches = todo.due_soon
+      } else if (filter === 'completed') {
+        statusMatches = todo.completed
+      } else if (filter !== 'all') {
+        statusMatches = !todo.completed
+      }
       return (
         statusMatches &&
         `${todo.title} ${todo.description}`

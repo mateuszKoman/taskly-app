@@ -11,6 +11,20 @@ def test_list_returns_tasks_from_repository(client, repository_mock, todo):
     repository_mock.list.assert_called_once_with()
 
 
+def test_list_due_soon_asks_repository_for_due_soon_tasks(client, repository_mock, todo):
+    repository_mock.list.return_value = [todo]
+    response = client.get("/api/todos", params={"due_soon": "true"})
+    assert response.status_code == 200
+    assert response.json() == [todo.model_dump(mode="json")]
+    repository_mock.list.assert_called_once_with(due_soon=True)
+
+
+def test_list_due_soon_false_uses_default_listing(client, repository_mock):
+    repository_mock.list.return_value = []
+    assert client.get("/api/todos", params={"due_soon": "false"}).status_code == 200
+    repository_mock.list.assert_called_once_with()
+
+
 def test_create_trims_input_and_returns_created_task(client, repository_mock, todo):
     repository_mock.create.return_value = todo
     response = client.post("/api/todos", json={"title": "  Plan the sprint  ", "priority": "high"})

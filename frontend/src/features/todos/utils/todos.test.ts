@@ -9,6 +9,7 @@ const base: Todo = {
   priority: 'medium',
   completed: false,
   due_date: null,
+  due_soon: false,
   created_at: '2026-10-01T12:00:00Z',
   updated_at: '2026-10-01T12:00:00Z',
 }
@@ -34,6 +35,11 @@ describe('selectTodos', () => {
   it('filters completed tasks', () => {
     const done = { ...base, id: 2, completed: true }
     expect(selectTodos([base, done], 'completed', '', 'newest')).toEqual([done])
+  })
+
+  it('filters due-soon tasks', () => {
+    const soon = { ...base, id: 2, due_soon: true }
+    expect(selectTodos([base, soon], 'due-soon', '', 'newest')).toEqual([soon])
   })
 
   it('sorts by due date with undated tasks last', () => {

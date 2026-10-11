@@ -1,3 +1,4 @@
+from datetime import date, datetime, timezone
 from unittest.mock import Mock
 
 from sqlalchemy import select
@@ -19,6 +20,26 @@ def test_list_maps_models_and_orders_tasks_newest_first(model_factory, todo_valu
     assert statement.compare(expected)
     compiled = str(statement.compile(dialect=postgresql.dialect()))
     assert "ORDER BY todos.created_at DESC, todos.id DESC" in compiled
+
+
+def test_list_due_soon_filters_active_tasks_in_window(monkeypatch):
+    session = Mock(spec=Session)
+    session.scalars.return_value = []
+    monkeypatch.setattr(
+        repository_module, "utc_now", lambda: datetime(2026, 10, 15, 18, 0, tzinfo=timezone.utc)
+    )
+    assert TodoRepository(session).list(due_soon=True) == []
+    statement = session.scalars.call_args.args[0]
+    expected = (
+        select(TodoRecord)
+        .order_by(TodoRecord.created_at.desc(), TodoRecord.id.desc())
+        .where(
+            TodoRecord.completed.is_(False),
+            TodoRecord.due_date >= date(2026, 10, 15),
+            TodoRecord.due_date <= date(2026, 10, 17),
+        )
+    )
+    assert statement.compare(expected)
 
 
 def test_get_returns_none_for_missing_task():
