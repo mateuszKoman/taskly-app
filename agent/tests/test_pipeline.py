@@ -27,7 +27,7 @@ def suites(after_passed=True):
 def pipeline(repo, client, runner, after_triage=lambda: None):
     result = triage(repo, "main")
     after_triage()  # triage itself shells out to git, so test-run fakes go in afterwards
-    make = lambda record: Agent(client, Config(), "system", Toolbox(repo, result, {}, record))
+    make = lambda run_triage, record: Agent(client, Config(), "system", Toolbox(repo, run_triage, {}, record))
     return run_pr(repo, result, "test-model", make, runner)
 
 

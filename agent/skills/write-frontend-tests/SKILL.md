@@ -19,6 +19,10 @@ Tests sit next to the code they test: `components/TodoItem.tsx` is tested in `co
 - Hooks that use react-query render inside a fresh `QueryClientProvider` per test, with `retry: false`.
 - Time-dependent code uses `vi.useFakeTimers()` and `vi.setSystemTime(...)`, restored with `vi.useRealTimers()`.
 
+## Checks the runtime adds
+
+Every write is formatted with the repo's Prettier config. Every run also type-checks the file with `tsc`, and a type error counts as a failure: test data must satisfy the source's types (for example, a `TodoInput` needs every required field).
+
 ## Before running
 
 Check every import path resolves relative to the test file, and every prop and export you use exists in the source you read.

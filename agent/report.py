@@ -12,6 +12,12 @@ from agent.triage import Triage
 from agent.verify import SuiteResult
 
 
+def suite_dict(result: SuiteResult) -> dict:
+    data = asdict(result)
+    data.pop("files", None)  # per-file detail is for target selection, not for the PR report
+    return data
+
+
 def run_status(triage: Triage, result: RunResult | None, error: str | None) -> str:
     if not triage.targets:
         return "nothing_to_do"
@@ -61,7 +67,7 @@ def build_report(
         ],
         "dropped": record.dropped,
         "suspected_bugs": record.suspected_bugs,
-        "suites": {side: {phase: asdict(r) for phase, r in phases.items()} for side, phases in suites.items()},
+        "suites": {side: {phase: suite_dict(r) for phase, r in phases.items()} for side, phases in suites.items()},
         "test_runs": [asdict(r) for r in record.test_runs],
         "usage": asdict(result.usage) if result else None,
         "summary": result.summary if result else "",

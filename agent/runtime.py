@@ -60,10 +60,14 @@ def missing_work(triage: Triage, record: RunRecord) -> list[str]:
 
 
 def first_message(triage: Triage) -> str:
-    return (
-        "Triage for this run. Targets are the files you must decide on; ignored files are context only.\n\n"
-        f"```json\n{json.dumps(triage.to_dict(), indent=2)}\n```"
-    )
+    if triage.mode == "full":
+        intro = (
+            "Full-repo mode: there is no diff. Targets are the files with the largest coverage gaps; each lists "
+            "its coverage and uncovered lines. Ignored files are context only."
+        )
+    else:
+        intro = "Triage for this run. Targets are the files you must decide on; ignored files are context only."
+    return f"{intro}\n\n```json\n{json.dumps(triage.to_dict(), indent=2)}\n```"
 
 
 class Agent:
