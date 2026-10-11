@@ -42,10 +42,10 @@ def setup(repo):
     return result, toolbox
 
 
-def run(setup, *responses, max_turns=40):
+def run(setup, *responses, **config):
     result, toolbox = setup
     client = ScriptedClient(*responses)
-    return Agent(client, Config(max_turns=max_turns), "system", toolbox).run(result), client
+    return Agent(client, Config(**config), "system", toolbox).run(result), client
 
 
 def test_completes_when_every_target_is_decided(setup):
@@ -78,7 +78,7 @@ def test_unrun_test_file_blocks_completion(setup):
         response("end_turn", text("done")),
     )
     assert outcome.stop_reason == "incomplete"
-    assert "has not passed in its latest run" in client.calls[2]["messages"][-1]["content"]
+    assert "is not green in its latest run" in client.calls[2]["messages"][-1]["content"]
 
 
 def test_tool_errors_are_returned_to_the_model(setup):
@@ -94,5 +94,31 @@ def test_tool_errors_are_returned_to_the_model(setup):
 
 def test_stops_at_max_turns(setup):
     outcome, _ = run(setup, *(response("tool_use", tool("list_files", path=".")) for _ in range(3)), max_turns=3)
-    assert outcome.stop_reason == "max_turns"
+    assert outcome.stop_reason == "limit:turns"
     assert outcome.usage.turns == 3
+
+
+def test_stops_at_token_budget(setup):
+    outcome, _ = run(setup, *(response("tool_use", tool("list_files", path=".")) for _ in range(3)), max_total_tokens=30)
+    assert outcome.stop_reason == "limit:tokens"
+    assert outcome.usage.turns == 2
+
+
+def test_stops_at_deadline_before_calling_the_model(setup):
+    outcome, client = run(setup, deadline_seconds=0)
+    assert outcome.stop_reason == "limit:time"
+    assert client.calls == []
+
+
+def test_file_with_spent_budget_does_not_block_completion(setup):
+    _, toolbox = setup
+    path = "backend/tests/core/test_new.py"
+    toolbox.record.files_written[path] = "create"
+    toolbox.record.last_result[path] = False
+    toolbox.record.failures[path] = 4
+    outcome, _ = run(
+        setup,
+        response("tool_use", tool("record_decision", path=TARGET, action="create", reason="new logic")),
+        response("end_turn", text("done")),
+    )
+    assert outcome.stop_reason == "completed"

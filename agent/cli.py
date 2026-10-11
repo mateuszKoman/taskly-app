@@ -8,7 +8,8 @@ import os
 import sys
 from pathlib import Path
 
-from agent.report import build_report, write_json
+from agent.pipeline import run_pr
+from agent.report import write_json
 from agent.runtime import Agent, Config
 from agent.skills import load_skills, skill_index
 from agent.tools import RunRecord, Toolbox
@@ -37,25 +38,20 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     config = Config(model=os.environ.get("AGENT_MODEL", Config.model))
-    if not result_triage.targets:
-        write_json(args.output_dir / "report.json", build_report("pr", config.model, result_triage, None, None))
-        print("nothing to test")
-        return 0
-
-    import anthropic  # deferred: triage and nothing-to-do runs work without the SDK
-
     skills = load_skills()
-    record = RunRecord()
-    toolbox = Toolbox(ROOT, result_triage, skills, record)
-    agent = Agent(anthropic.Anthropic().beta.messages, config, system_prompt(skills), toolbox)
-    result = None
-    try:
-        result = agent.run(result_triage)
-    finally:
-        report = build_report("pr", config.model, result_triage, record, result)
-        write_json(args.output_dir / "report.json", report)
-    print(f"status: {report['status']} ({result.stop_reason}), {result.usage.turns} turn(s)")
-    return 0 if report["status"] == "ok" else 1
+    system = system_prompt(skills)
+
+    def make_agent(record: RunRecord) -> Agent:
+        import anthropic  # deferred: triage and nothing-to-do runs work without the SDK
+
+        client = anthropic.Anthropic(max_retries=4).beta.messages
+        return Agent(client, config, system, Toolbox(ROOT, result_triage, skills, record))
+
+    report = run_pr(ROOT, result_triage, config.model, make_agent)
+    write_json(args.output_dir / "report.json", report)
+    usage = report["usage"] or {}
+    print(f"status: {report['status']}, turns: {usage.get('turns', 0)}, check_failed: {report['check_failed']}")
+    return 1 if report["check_failed"] else 0
 
 
 if __name__ == "__main__":
