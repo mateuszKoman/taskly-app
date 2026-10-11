@@ -95,10 +95,13 @@ TOOL_SPECS: list[dict[str, Any]] = [
     },
     {
         "name": "run_tests",
-        "description": "Run the given test files with the side's fixed test command and return the result.",
+        "description": (
+            "Run the given test files with the side's fixed command (backend: pytest, frontend: vitest run) "
+            "and return the result."
+        ),
         "input_schema": obj(
             {
-                "target": {"type": "string", "enum": ["backend"]},
+                "target": {"type": "string", "enum": ["backend", "frontend"]},
                 "paths": {"type": "array", "items": STR, "description": "Repo-relative test file paths."},
             },
             ["target", "paths"],
@@ -196,8 +199,22 @@ class Toolbox:
         self.record.last_result.pop(rel, None)
         return f"wrote {rel} ({len(content)} characters)"
 
+    def test_command(self, target: str, rels: list[str]) -> tuple[list[str], Path, dict[str, str]]:
+        side_dir = self.root / target
+        side_paths = [str(PurePosixPath(r).relative_to(target)) for r in rels]
+        env = safe_env()
+        if target == "backend":
+            command = [backend_python(self.root), "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider"]
+        else:
+            vitest = side_dir / "node_modules" / ".bin" / "vitest"
+            if not vitest.exists():
+                raise ToolError("frontend dependencies are not installed (run `npm ci` in frontend/)")
+            command = [str(vitest), "run"]
+            env.update(CI="1", FORCE_COLOR="0")
+        return command + side_paths, side_dir, env
+
     def run_tests(self, target: str, paths: list[str]) -> str:
-        if target != "backend":
+        if target not in TEST_PATTERNS:
             raise ToolError(f"unsupported test target {target!r}")
         if not paths:
             raise ToolError("paths must list at least one test file")
@@ -209,14 +226,10 @@ class Toolbox:
             if not resolved.is_file():
                 raise ToolError(f"{rel} does not exist")
             rels.append(rel)
-        command = [
-            backend_python(self.root), "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider",
-            *(str(PurePosixPath(r).relative_to("backend")) for r in rels),
-        ]
+        command, cwd, env = self.test_command(target, rels)
         try:
             proc = subprocess.run(
-                command, cwd=self.root / "backend", env=safe_env(), capture_output=True,
-                text=True, timeout=TEST_TIMEOUT_SECONDS,
+                command, cwd=cwd, env=env, capture_output=True, text=True, timeout=TEST_TIMEOUT_SECONDS,
             )
         except subprocess.TimeoutExpired:
             for rel in rels:
