@@ -1,0 +1,156 @@
+name: Test agent
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Everything is denied by default; each job asks for only what it needs.
+permissions: {}
+
+concurrency:
+  group: test-agent-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Decide whether to run
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          reason=""
+          if [ "$HEAD_REPO" != "$REPO" ]; then
+            reason="this PR comes from a fork, which cannot use the repository's API key"
+          elif jq -e 'index("skip-test-agent")' <<<"$LABELS" >/dev/null; then
+            reason="the skip-test-agent label is set"
+          else
+            commit="$(gh api "repos/$REPO/commits/$HEAD_SHA")"
+            author="$(jq -r '.author.login // .commit.author.name' <<<"$commit")"
+            if [ "$author" = "github-actions[bot]" ] && jq -r '.commit.message' <<<"$commit" | grep -qx 'Test-Agent: generated'; then
+              reason="the latest commit was made by the test agent itself"
+            fi
+          fi
+          if [ -n "$reason" ]; then
+            echo "::notice title=Test agent skipped::Skipped because $reason."
+            echo "### 🧪 Test agent skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "Skipped because $reason." >> "$GITHUB_STEP_SUMMARY"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  generate:
+    name: Generate and verify tests
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      AGENT_MODEL: ${{ vars.AGENT_MODEL || 'claude-sonnet-5-5' }}
+      BASE_REF: ${{ github.base_ref }}
+    steps:
+      # The PR head, not the merge commit, so the patch applies cleanly to the PR branch.
+      # No credentials are persisted: the PR's own code runs in this job.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: backend/.python-version
+
+      # Triage needs only the standard library; a PR with nothing to test skips every install below.
+      - id: triage
+        run: |
+          python -m agent triage --base "origin/$BASE_REF"
+          echo "targets=$(jq '.targets | length' agent-output/triage.json)" >> "$GITHUB_OUTPUT"
+
+      - if: steps.triage.outputs.targets != '0'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: backend/.python-version
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            agent/requirements.txt
+
+      - if: steps.triage.outputs.targets != '0'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        if: steps.triage.outputs.targets != '0'
+        run: |
+          python -m pip install --disable-pip-version-check -r backend/requirements.txt -r agent/requirements.txt
+          npm ci --prefix frontend --no-audit --no-fund
+
+      # The API key is scoped to this one step.
+      - name: Run test agent
+        id: agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TARGETS: ${{ steps.triage.outputs.targets }}
+        run: |
+          if [ "$TARGETS" != "0" ] && [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error title=Test agent::The ANTHROPIC_API_KEY repository secret is not set."
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          set +e
+          python -m agent pr --base "origin/$BASE_REF"
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Collect the test patch
+        if: always()
+        run: |
+          mkdir -p agent-output
+          tests=(':(glob)backend/tests/**/test_*.py' ':(glob)frontend/src/**/*.test.ts' ':(glob)frontend/src/**/*.test.tsx')
+          # New test files are untracked; mark them so they show up in the diff.
+          git ls-files --others --exclude-standard -z -- "${tests[@]}" | xargs -0 -r git add --intent-to-add --
+          git diff --binary -- "${tests[@]}" > agent-output/tests.patch
+          echo "Patch: $(git diff --stat -- ':(glob)backend/tests/**' ':(glob)frontend/src/**' | tail -1)"
+
+      - name: Write job summary
+        if: always()
+        run: |
+          if [ -f agent-output/summary.md ]; then
+            cat agent-output/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### 🧪 Test agent: ❌ no report was produced" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: test-agent-output
+          path: agent-output/
+          retention-days: 7
+          if-no-files-found: warn
+
+      # Red only when a full suite fails with the agent's tests applied, or the agent errored.
+      - name: Set check status
+        env:
+          EXIT_CODE: ${{ steps.agent.outputs.exit_code }}
+        run: |
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error title=Test agent::A full test suite fails or the agent errored. See the job summary."
+            exit 1
+          fi
