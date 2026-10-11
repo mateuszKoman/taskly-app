@@ -31,3 +31,18 @@ it('shows an active task and forwards edit requests', async () => {
   expect(onToggle).not.toHaveBeenCalled()
   expect(onDelete).not.toHaveBeenCalled()
 })
+
+it('shows a Due soon badge only for due-soon tasks', () => {
+  const props = {
+    busy: false,
+    onEdit: vi.fn(),
+    onToggle: vi.fn(),
+    onDelete: vi.fn(),
+  }
+  const { rerender } = render(
+    <TodoItem todo={{ ...todoFixture, due_soon: true }} {...props} />,
+  )
+  expect(screen.getByText('Due soon')).toBeVisible()
+  rerender(<TodoItem todo={{ ...todoFixture, due_soon: false }} {...props} />)
+  expect(screen.queryByText('Due soon')).not.toBeInTheDocument()
+})

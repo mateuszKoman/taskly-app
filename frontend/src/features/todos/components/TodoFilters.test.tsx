@@ -28,3 +28,21 @@ it('displays controlled values and forwards all filter changes', async () => {
   expect(screen.getByLabelText('Status')).toHaveValue('completed')
   expect(screen.getByLabelText('Sort by')).toHaveValue('due')
 })
+
+it('offers a Due soon status option and forwards its selection', async () => {
+  const user = userEvent.setup()
+  const onFilterChange = vi.fn()
+  render(
+    <TodoFilters
+      filter="all"
+      search=""
+      sort="newest"
+      onFilterChange={onFilterChange}
+      onSearchChange={vi.fn()}
+      onSortChange={vi.fn()}
+    />,
+  )
+  await user.selectOptions(screen.getByLabelText('Status'), 'due-soon')
+  expect(onFilterChange).toHaveBeenCalledWith('due-soon')
+  expect(screen.getByRole('option', { name: 'Due soon' })).toBeInTheDocument()
+})

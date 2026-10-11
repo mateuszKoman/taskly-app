@@ -37,6 +37,11 @@ describe('selectTodos', () => {
     expect(selectTodos([base, done], 'completed', '', 'newest')).toEqual([done])
   })
 
+  it('filters due-soon tasks', () => {
+    const soon = { ...base, id: 2, due_soon: true }
+    expect(selectTodos([base, soon], 'due-soon', '', 'newest')).toEqual([soon])
+  })
+
   it('sorts by due date with undated tasks last', () => {
     const late = { ...base, id: 2, due_date: '2026-12-01' }
     const soon = { ...base, id: 3, due_date: '2026-11-01' }
