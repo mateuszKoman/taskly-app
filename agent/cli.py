@@ -9,6 +9,7 @@ import os
 import sys
 from pathlib import Path
 
+from agent.patch import patch_errors, path_errors
 from agent.pipeline import run_pr
 from agent.render import render_markdown
 from agent.report import write_json
@@ -66,6 +67,20 @@ def cmd_render(args: argparse.Namespace) -> int:
     return 0
 
 
+def report_errors(errors: list[str]) -> int:
+    for error in errors:
+        print(f"::error title=Patch rejected::{error}")
+    return 1 if errors else 0
+
+
+def cmd_validate_patch(args: argparse.Namespace) -> int:
+    return report_errors(patch_errors(args.patch.read_text()))
+
+
+def cmd_check_paths(args: argparse.Namespace) -> int:
+    return report_errors(path_errors(sys.stdin.read().split("\0")))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m agent")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -81,6 +96,11 @@ def main(argv: list[str] | None = None) -> int:
     render.add_argument("--report", type=Path, default=ROOT / "agent-output" / "report.json")
     render.add_argument("--run-url", help="link to the workflow run")
     render.set_defaults(handler=cmd_render)
+    validate = commands.add_parser("validate-patch", help="reject a patch that touches anything but test files")
+    validate.add_argument("--patch", type=Path, required=True)
+    validate.set_defaults(handler=cmd_validate_patch)
+    check = commands.add_parser("check-paths", help="reject NUL-separated paths on stdin that are not test files")
+    check.set_defaults(handler=cmd_check_paths)
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
